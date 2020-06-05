@@ -12,17 +12,24 @@ https://docs.djangoproject.com/en/1.10/ref/settings/
 import sys
 import os
 
+
+def env_to_bool(env, default):
+    str_val = os.environ.get(env)
+    return default if str_val is None else str_val == 'True'
+
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.10/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'n9ceqv38)#&mwuat@(mjb_p%em$e8$qyr#fw9ot!=ba6lijx-6'
-
+SECRET_KEY = os.environ.get(
+    'DJANGO_SECRET_KEY') or 'n9ceqv38)#&mwuat@(mjb_p%em$e8$qyr#fw9ot!=ba6lijx-6'
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_to_bool('DJANGO_DEBUG', True)
 # DEBUG = False
 TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
 
@@ -98,14 +105,15 @@ WSGI_APPLICATION = 'DjangoBlog.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'djangoblog',
-        'USER': os.environ.get('DJANGO_MYSQL_USER'),
-        'PASSWORD': os.environ.get('DJANGO_MYSQL_PASSWORD'),
-        'HOST': os.environ.get('DJANGO_MYSQL_HOST'),
-        'PORT': 3306,
-        'OPTIONS': {'charset': 'utf8mb4'},
-    }
-}
+        'NAME': os.environ.get('DJANGO_MYSQL_DATABASE') or 'djangoblog',
+        'USER': os.environ.get('DJANGO_MYSQL_USER') or 'root',
+        'PASSWORD': os.environ.get('DJANGO_MYSQL_PASSWORD') or 'djangoblog_123',
+        'HOST': os.environ.get('DJANGO_MYSQL_HOST') or '127.0.0.1',
+        'PORT': int(
+            os.environ.get('DJANGO_MYSQL_PORT') or 3306),
+        'OPTIONS': {
+            'charset': 'utf8mb4'},
+    }}
 
 # Password validation
 # https://docs.djangoproject.com/en/1.10/ref/settings/#auth-password-validators
@@ -148,10 +156,11 @@ HAYSTACK_CONNECTIONS = {
         'PATH': os.path.join(os.path.dirname(__file__), 'whoosh_index'),
     },
 }
-# 自动更新搜索索引
+# Automatically update searching index
 HAYSTACK_SIGNAL_PROCESSOR = 'haystack.signals.RealtimeSignalProcessor'
-# 允许使用用户名或密码登录
-AUTHENTICATION_BACKENDS = ['accounts.user_login_backend.EmailOrUsernameModelBackend']
+# Allow user login with username and password
+AUTHENTICATION_BACKENDS = [
+    'accounts.user_login_backend.EmailOrUsernameModelBackend']
 
 STATIC_ROOT = os.path.join(SITE_ROOT, 'collectedstatic')
 
@@ -164,24 +173,23 @@ LOGIN_URL = '/login/'
 TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 DATE_TIME_FORMAT = '%Y-%m-%d'
 
-# bootstrap颜色样式
+# bootstrap color styles
 BOOTSTRAP_COLOR_TYPES = [
     'default', 'primary', 'success', 'info', 'warning', 'danger'
 ]
 
-# 分页
+# paginate
 PAGINATE_BY = 10
-# http缓存时间
+# http cache timeout
 CACHE_CONTROL_MAX_AGE = 2592000
 # cache setting
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
-        'LOCATION': '127.0.0.1:11211',
+        'LOCATION': os.environ.get('DJANGO_MEMCACHED_LOCATION') or '127.0.0.1:11211',
         'KEY_PREFIX': 'django_test' if TESTING else 'djangoblog',
         'TIMEOUT': 60 * 60 * 10
-    },
-    'locmemcache': {
+    } if env_to_bool('DJANGO_MEMCACHED_ENABLE', True) else {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
         'TIMEOUT': 10800,
         'LOCATION': 'unique-snowflake',
@@ -189,24 +197,24 @@ CACHES = {
 }
 
 SITE_ID = 1
-BAIDU_NOTIFY_URL = "http://data.zz.baidu.com/urls?site=https://www.lylinux.net&token=1uAOGrMsUm5syDGn"
+BAIDU_NOTIFY_URL = os.environ.get('DJANGO_BAIDU_NOTIFY_URL') \
+    or 'http://data.zz.baidu.com/urls?site=https://www.lylinux.net&token=1uAOGrMsUm5syDGn'
 
-# Emial:
+# Email:
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-
-# EMAIL_USE_TLS = True
-EMAIL_USE_SSL = True
-
-EMAIL_HOST = 'smtp.mxhichina.com'
-EMAIL_PORT = 465
+EMAIL_USE_TLS = env_to_bool('DJANGO_EMAIL_TLS', False)
+EMAIL_USE_SSL = env_to_bool('DJANGO_EMAIL_SSL', True)
+EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST') or 'smtp.mxhichina.com'
+EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT') or 465)
 EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_PASSWORD')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-SERVER_EMAIL = os.environ.get('DJANGO_EMAIL_USER')
-# 设置debug=false 未处理异常邮件通知
-ADMINS = [('liangliang', 'liangliangyy@gmail.com')]
-# 微信管理员密码(两次md5获得)
-WXADMIN = '995F03AC401D6CABABAEF756FC4D43C7'
+SERVER_EMAIL = EMAIL_HOST_USER
+# Setting debug=false did NOT handle except email notifications
+ADMINS = [('admin', os.environ.get('DJANGO_ADMIN_EMAIL') or 'admin@admin.com')]
+# WX ADMIN password(Two times md5)
+WXADMIN = os.environ.get(
+    'DJANGO_WXADMIN_PASSWORD') or '995F03AC401D6CABABAEF756FC4D43C7'
 
 LOGGING = {
     'version': 1,
@@ -287,3 +295,4 @@ COMPRESS_JS_FILTERS = [
 
 MEDIA_ROOT = os.path.join(SITE_ROOT, 'uploads')
 MEDIA_URL = '/media/'
+X_FRAME_OPTIONS = 'SAMEORIGIN'
