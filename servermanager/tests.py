@@ -1,13 +1,14 @@
 from django.test import Client, RequestFactory, TestCase
-from DjangoBlog.utils import get_current_site
-from .models import commands
-import datetime
+from django.utils import timezone
+from werobot.messages.messages import TextMessage
+
+from djangoblog.utils import get_current_site
 from accounts.models import BlogUser
 from blog.models import Category, Article
-from .robot import search, category, recents
-from werobot.messages.messages import TextMessage
+from servermanager.api.commonapi import TuLing
+from .models import commands
 from .robot import MessageHandler, CommandHandler
-from servermanager.Api.commonapi import TuLing
+from .robot import search, category, recents
 
 
 # Create your tests here.
@@ -32,8 +33,8 @@ class ServerManagerTest(TestCase):
 
         c = Category()
         c.name = "categoryccc"
-        c.created_time = datetime.datetime.now()
-        c.last_mod_time = datetime.datetime.now()
+        c.created_time = timezone.now()
+        c.last_mod_time = timezone.now()
         c.save()
 
         article = Article()

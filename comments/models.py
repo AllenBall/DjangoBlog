@@ -1,7 +1,8 @@
-from django.db import models
 from django.conf import settings
-from blog.models import Article
+from django.db import models
 from django.utils.timezone import now
+
+from blog.models import Article
 
 
 # Create your models here.
@@ -28,7 +29,7 @@ class Comment(models.Model):
         '是否显示', default=True, blank=False, null=False)
 
     class Meta:
-        ordering = ['id']
+        ordering = ['-id']
         verbose_name = "评论"
         verbose_name_plural = verbose_name
         get_latest_by = 'id'

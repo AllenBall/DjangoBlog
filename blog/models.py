@@ -1,26 +1,27 @@
 import logging
-from abc import ABCMeta, abstractmethod, abstractproperty
+from abc import abstractmethod
 
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
-from django.conf import settings
-from uuslug import slugify
-from django.core.exceptions import ValidationError
-from django.utils.translation import gettext_lazy as _
-from DjangoBlog.utils import get_current_site
-from DjangoBlog.utils import cache_decorator, cache
 from django.utils.timezone import now
+from django.utils.translation import gettext_lazy as _
 from mdeditor.fields import MDTextField
+from uuslug import slugify
+
+from djangoblog.utils import cache_decorator, cache
+from djangoblog.utils import get_current_site
 
 logger = logging.getLogger(__name__)
 
-LINK_SHOW_TYPE = (
-    ('i', '首页'),
-    ('l', '列表页'),
-    ('p', '文章页面'),
-    ('a', '全站'),
-    ('s', '友情链接页面'),
-)
+
+class LinkShowType(models.TextChoices):
+    I = ('i', '首页')
+    L = ('l', '列表页')
+    P = ('p', '文章页面')
+    A = ('a', '全站')
+    S = ('s', '友情链接页面')
 
 
 class BaseModel(models.Model):
@@ -94,6 +95,7 @@ class Article(BaseModel):
         on_delete=models.CASCADE)
     article_order = models.IntegerField(
         '排序,数字越大越靠前', blank=False, null=False, default=0)
+    show_toc = models.BooleanField("是否显示toc目录", blank=False, null=False, default=False)
     category = models.ForeignKey(
         'Category',
         verbose_name='分类',
@@ -143,7 +145,7 @@ class Article(BaseModel):
             logger.info('get article comments:{id}'.format(id=self.id))
             return value
         else:
-            comments = self.comment_set.filter(is_enable=True)
+            comments = self.comment_set.filter(is_enable=True).order_by('-id')
             cache.set(cache_key, comments, 60 * 100)
             logger.info('set article comments:{id}'.format(id=self.id))
             return comments
@@ -174,9 +176,10 @@ class Category(BaseModel):
         null=True,
         on_delete=models.CASCADE)
     slug = models.SlugField(default='no-slug', max_length=60, blank=True)
+    index = models.IntegerField(default=0, verbose_name="权重排序-越大越靠前")
 
     class Meta:
-        ordering = ['name']
+        ordering = ['-index']
         verbose_name = "分类"
         verbose_name_plural = verbose_name
 
@@ -258,8 +261,8 @@ class Links(models.Model):
     show_type = models.CharField(
         '显示类型',
         max_length=1,
-        choices=LINK_SHOW_TYPE,
-        default='i')
+        choices=LinkShowType.choices,
+        default=LinkShowType.I)
     created_time = models.DateTimeField('创建时间', default=now)
     last_mod_time = models.DateTimeField('修改时间', default=now)
 
@@ -291,7 +294,7 @@ class SideBar(models.Model):
 
 
 class BlogSettings(models.Model):
-    '''站点设置 '''
+    """blog的配置"""
     sitename = models.CharField(
         "网站名称",
         max_length=200,
@@ -315,6 +318,7 @@ class BlogSettings(models.Model):
     article_sub_length = models.IntegerField("文章摘要长度", default=300)
     sidebar_article_count = models.IntegerField("侧边栏文章数目", default=10)
     sidebar_comment_count = models.IntegerField("侧边栏评论数目", default=5)
+    article_comment_count = models.IntegerField("文章评论数目", default=5)
     show_google_adsense = models.BooleanField('是否显示谷歌广告', default=False)
     google_adsense_codes = models.TextField(
         '广告内容', max_length=2000, null=True, blank=True, default='')
@@ -358,5 +362,5 @@ class BlogSettings(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        from DjangoBlog.utils import cache
+        from djangoblog.utils import cache
         cache.clear()

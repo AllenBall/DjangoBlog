@@ -1,18 +1,19 @@
-from django.shortcuts import render
-
 # Create your views here.
-import json
 import datetime
 import itertools
-from itertools import groupby
-from django.http import HttpResponse
-from .models import OwnTrackLog
+import json
 import logging
-from django.shortcuts import render
-from django.http import JsonResponse
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import csrf_exempt
+from itertools import groupby
+
 import requests
+from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse
+from django.http import JsonResponse
+from django.shortcuts import render
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+
+from .models import OwnTrackLog
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def manage_owntrack_log(request):
 @login_required
 def show_maps(request):
     if request.user.is_superuser:
-        defaultdate = str(datetime.datetime.now().date())
+        defaultdate = str(timezone.now().date())
         date = request.GET.get('date', defaultdate)
         context = {
             'date': date
@@ -103,6 +104,7 @@ def get_datas(request):
         date = list(map(lambda x: int(x), request.GET.get('date').split('-')))
         querydate = django.utils.timezone.datetime(
             date[0], date[1], date[2], 0, 0, 0)
+    querydate = django.utils.timezone.make_aware(querydate)
     nextdate = querydate + datetime.timedelta(days=1)
     models = OwnTrackLog.objects.filter(
         created_time__range=(querydate, nextdate))

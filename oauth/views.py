@@ -1,26 +1,26 @@
-from django.shortcuts import render
-
+import logging
 # Create your views here.
 from urllib.parse import urlparse
-import datetime
-from django.conf import settings
-from django.http import HttpResponse, HttpResponseRedirect
-from django.contrib.auth import get_user_model
-from .models import OAuthUser
-from django.contrib.auth import login
-from django.shortcuts import get_object_or_404
-from django.views.generic import FormView, RedirectView
-from oauth.forms import RequireEmailForm
-from django.urls import reverse
-from django.db import transaction
-from DjangoBlog.utils import send_email, get_md5, save_user_avatar
-from DjangoBlog.utils import get_current_site
-from django.core.exceptions import ObjectDoesNotExist
-from django.http import HttpResponseForbidden
-from .oauthmanager import get_manager_by_type, OAuthAccessTokenException
-from DjangoBlog.blog_signals import oauth_user_login_signal
 
-import logging
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth import login
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
+from django.http import HttpResponseForbidden
+from django.http import HttpResponseRedirect
+from django.shortcuts import get_object_or_404
+from django.shortcuts import render
+from django.urls import reverse
+from django.utils import timezone
+from django.views.generic import FormView
+
+from djangoblog.blog_signals import oauth_user_login_signal
+from djangoblog.utils import get_current_site
+from djangoblog.utils import send_email, get_sha256
+from oauth.forms import RequireEmailForm
+from .models import OAuthUser
+from .oauthmanager import get_manager_by_type, OAuthAccessTokenException
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,7 @@ def authorize(request):
     user = manager.get_oauth_userinfo()
     if user:
         if not user.nikename or not user.nikename.strip():
-            import datetime
-            user.nikename = "djangoblog" + datetime.datetime.now().strftime('%y%m%d%I%M%S')
+            user.nikename = "djangoblog" + timezone.now().strftime('%y%m%d%I%M%S')
         try:
             temp = OAuthUser.objects.get(type=type, openid=user.openid)
             temp.picture = user.picture
@@ -102,7 +101,7 @@ def authorize(request):
                         except ObjectDoesNotExist:
                             author.username = user.nikename
                         else:
-                            author.username = "djangoblog" + datetime.datetime.now().strftime('%y%m%d%I%M%S')
+                            author.username = "djangoblog" + timezone.now().strftime('%y%m%d%I%M%S')
                         author.source = 'authorize'
                         author.save()
 
@@ -127,10 +126,9 @@ def authorize(request):
 def emailconfirm(request, id, sign):
     if not sign:
         return HttpResponseForbidden()
-    if not get_md5(
-            settings.SECRET_KEY +
-            str(id) +
-            settings.SECRET_KEY).upper() == sign.upper():
+    if not get_sha256(settings.SECRET_KEY +
+                      str(id) +
+                      settings.SECRET_KEY).upper() == sign.upper():
         return HttpResponseForbidden()
     oauthuser = get_object_or_404(OAuthUser, pk=id)
     with transaction.atomic():
@@ -142,7 +140,7 @@ def emailconfirm(request, id, sign):
             if result[1]:
                 author.source = 'emailconfirm'
                 author.username = oauthuser.nikename.strip() if oauthuser.nikename.strip(
-                ) else "djangoblog" + datetime.datetime.now().strftime('%y%m%d%I%M%S')
+                ) else "djangoblog" + timezone.now().strftime('%y%m%d%I%M%S')
                 author.save()
         oauthuser.author = author
         oauthuser.save()
@@ -204,8 +202,8 @@ class RequireEmailView(FormView):
         oauthuser = get_object_or_404(OAuthUser, pk=oauthid)
         oauthuser.email = email
         oauthuser.save()
-        sign = get_md5(settings.SECRET_KEY +
-                       str(oauthuser.id) + settings.SECRET_KEY)
+        sign = get_sha256(settings.SECRET_KEY +
+                          str(oauthuser.id) + settings.SECRET_KEY)
         site = get_current_site().domain
         if settings.DEBUG:
             site = '127.0.0.1:8000'

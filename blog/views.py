@@ -1,20 +1,21 @@
-from django.shortcuts import render
-
-# Create your views here.
-import os
-import datetime
-from django.views.generic.list import ListView
-from django.views.generic.detail import DetailView
-from django.conf import settings
-from django import forms
-from django.http import HttpResponse, HttpResponseRedirect, HttpResponseForbidden
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth.decorators import login_required
-from DjangoBlog.utils import cache, get_md5, get_blog_setting
-from django.shortcuts import get_object_or_404
-from blog.models import Article, Category, Tag, Links
-from comments.forms import CommentForm
 import logging
+import os
+import uuid
+
+from django.conf import settings
+from django.core.paginator import Paginator
+from django.http import HttpResponse, HttpResponseForbidden
+from django.shortcuts import get_object_or_404
+from django.shortcuts import render
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.views.generic.detail import DetailView
+from django.views.generic.list import ListView
+from haystack.views import SearchView
+
+from blog.models import Article, Category, LinkShowType, Links, Tag
+from comments.forms import CommentForm
+from djangoblog.utils import cache, get_blog_setting, get_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class ArticleListView(ListView):
     page_type = ''
     paginate_by = settings.PAGINATE_BY
     page_kwarg = 'page'
-    link_type = 'l'
+    link_type = LinkShowType.L
 
     def get_view_cache_key(self):
         return self.request.get['pages']
@@ -89,7 +90,7 @@ class IndexView(ArticleListView):
     首页
     '''
     # 友情链接类型
-    link_type = 'i'
+    link_type = LinkShowType.I
 
     def get_queryset_data(self):
         article_list = Article.objects.filter(type='a', status='p')
@@ -116,22 +117,35 @@ class ArticleDetailView(DetailView):
         return obj
 
     def get_context_data(self, **kwargs):
-        articleid = int(self.kwargs[self.pk_url_kwarg])
         comment_form = CommentForm()
-        user = self.request.user
-        # 如果用户已经登录，则隐藏邮件和用户名输入框
-        if user.is_authenticated and not user.is_anonymous and user.email and user.username:
-            comment_form.fields.update({
-                'email': forms.CharField(widget=forms.HiddenInput()),
-                'name': forms.CharField(widget=forms.HiddenInput()),
-            })
-            comment_form.fields["email"].initial = user.email
-            comment_form.fields["name"].initial = user.username
 
         article_comments = self.object.comment_list()
+        parent_comments = article_comments.filter(parent_comment=None)
+        blog_setting = get_blog_setting()
+        paginator = Paginator(parent_comments, blog_setting.article_comment_count)
+        page = self.request.GET.get('comment_page', '1')
+        if not page.isnumeric():
+            page = 1
+        else:
+            page = int(page)
+            if page < 1:
+                page = 1
+            if page > paginator.num_pages:
+                page = paginator.num_pages
 
+        p_comments = paginator.page(page)
+        next_page = p_comments.next_page_number() if p_comments.has_next() else None
+        prev_page = p_comments.previous_page_number() if p_comments.has_previous() else None
+
+        if next_page:
+            kwargs[
+                'comment_next_page_url'] = self.object.get_absolute_url() + f'?comment_page={next_page}#commentlist-container'
+        if prev_page:
+            kwargs[
+                'comment_prev_page_url'] = self.object.get_absolute_url() + f'?comment_page={prev_page}#commentlist-container'
         kwargs['form'] = comment_form
         kwargs['article_comments'] = article_comments
+        kwargs['p_comments'] = p_comments
         kwargs['comment_count'] = len(
             article_comments) if article_comments else 0
 
@@ -187,7 +201,8 @@ class AuthorDetailView(ArticleListView):
     page_type = '作者文章归档'
 
     def get_queryset_cache_key(self):
-        author_name = self.kwargs['author_name']
+        from uuslug import slugify
+        author_name = slugify(self.kwargs['author_name'])
         cache_key = 'author_{author_name}_{page}'.format(
             author_name=author_name, page=self.page_number)
         return cache_key
@@ -262,6 +277,23 @@ class LinkListView(ListView):
         return Links.objects.filter(is_enable=True)
 
 
+class EsSearchView(SearchView):
+    def get_context(self):
+        paginator, page = self.build_page()
+        context = {
+            "query": self.query,
+            "form": self.form,
+            "page": page,
+            "paginator": paginator,
+            "suggestion": None,
+        }
+        if hasattr(self.results, "query") and self.results.query.backend.include_spelling:
+            context["suggestion"] = self.results.query.get_spelling_suggestion()
+        context.update(self.extra_context())
+
+        return context
+
+
 @csrf_exempt
 def fileupload(request):
     """
@@ -273,11 +305,11 @@ def fileupload(request):
         sign = request.GET.get('sign', None)
         if not sign:
             return HttpResponseForbidden()
-        if not sign == get_md5(get_md5(settings.SECRET_KEY)):
+        if not sign == get_sha256(get_sha256(settings.SECRET_KEY)):
             return HttpResponseForbidden()
         response = []
         for filename in request.FILES:
-            timestr = datetime.datetime.now().strftime('%Y/%m/%d')
+            timestr = timezone.now().strftime('%Y/%m/%d')
             imgextensions = ['jpg', 'png', 'jpeg', 'bmp']
             fname = u''.join(str(filename))
             isimage = len([i for i in imgextensions if fname.find(i) >= 0]) > 0
@@ -293,7 +325,9 @@ def fileupload(request):
                 type='files' if not isimage else 'image', timestr=timestr, filename=filename)
             if not os.path.exists(basepath):
                 os.makedirs(basepath)
-            savepath = os.path.join(basepath, filename)
+            savepath = os.path.normpath(os.path.join(basepath, f"{uuid.uuid4().hex}{os.path.splitext(filename)[-1]}"))
+            if not savepath.startswith(basepath):
+                return HttpResponse("only for post")
             with open(savepath, 'wb+') as wfile:
                 for chunk in request.FILES[filename].chunks():
                     wfile.write(chunk)
@@ -306,22 +340,6 @@ def fileupload(request):
 
     else:
         return HttpResponse("only for post")
-
-
-@login_required
-def refresh_memcache(request):
-    try:
-
-        if request.user.is_superuser:
-            from DjangoBlog.utils import cache
-            if cache and cache is not None:
-                cache.clear()
-            return HttpResponse("ok")
-        else:
-            return HttpResponseForbidden()
-    except Exception as e:
-        logger.error(e)
-        return HttpResponse(e)
 
 
 def page_not_found_view(

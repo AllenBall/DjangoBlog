@@ -1,36 +1,22 @@
-#!/usr/bin/env python
-# encoding: utf-8
-
-
-"""
-@version: ??
-@author: liangliangyy
-@license: MIT Licence
-@contact: liangliangyy@gmail.com
-@site: https://www.lylinux.net/
-@software: PyCharm
-@file: blog_tags.py
-@time: 2016/11/2 下午11:10
-"""
+import hashlib
+import logging
+import random
+import urllib
 
 from django import template
-from django.db.models import Q
 from django.conf import settings
-from django.template.defaultfilters import stringfilter
-from django.utils.safestring import mark_safe
-import random
-from django.urls import reverse
-from blog.models import Article, Category, Tag, Links, SideBar
-from django.utils.encoding import force_text
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
-import hashlib
-import urllib
+from django.template.defaultfilters import stringfilter
+from django.urls import reverse
+from django.utils.safestring import mark_safe
+
+from blog.models import Article, Category, Tag, Links, SideBar, LinkShowType
 from comments.models import Comment
-from DjangoBlog.utils import cache_decorator, cache
-from django.contrib.auth import get_user_model
+from djangoblog.utils import CommonMarkdown
+from djangoblog.utils import cache
+from djangoblog.utils import get_current_site
 from oauth.models import OAuthUser
-from DjangoBlog.utils import get_current_site
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +27,6 @@ register = template.Library()
 def timeformat(data):
     try:
         return data.strftime(settings.TIME_FORMAT)
-        # print(data.strftime(settings.TIME_FORMAT))
-        # return "ddd"
     except Exception as e:
         logger.error(e)
         return ""
@@ -57,11 +41,17 @@ def datetimeformat(data):
         return ""
 
 
-@register.filter(is_safe=True)
+@register.filter()
 @stringfilter
 def custom_markdown(content):
-    from DjangoBlog.utils import CommonMarkdown
     return mark_safe(CommonMarkdown.get_markdown(content))
+
+
+@register.simple_tag
+def get_markdown_toc(content):
+    from djangoblog.utils import CommonMarkdown
+    body, toc = CommonMarkdown.get_markdown_with_toc(content)
+    return mark_safe(toc)
 
 
 @register.filter(is_safe=True)
@@ -73,7 +63,7 @@ def truncatechars_content(content):
     :return:
     """
     from django.template.defaultfilters import truncatechars_html
-    from DjangoBlog.utils import get_blog_setting
+    from djangoblog.utils import get_blog_setting
     blogsetting = get_blog_setting()
     return truncatechars_html(content, blogsetting.article_sub_length)
 
@@ -94,7 +84,7 @@ def load_breadcrumb(article):
     :return:
     """
     names = article.get_category_tree()
-    from DjangoBlog.utils import get_blog_setting
+    from djangoblog.utils import get_blog_setting
     blogsetting = get_blog_setting()
     site = get_current_site().domain
     names.append((blogsetting.sitename, '/'))
@@ -102,7 +92,8 @@ def load_breadcrumb(article):
 
     return {
         'names': names,
-        'title': article.title
+        'title': article.title,
+        'count': len(names) + 1
     }
 
 
@@ -132,50 +123,58 @@ def load_sidebar(user, linktype):
     加载侧边栏
     :return:
     """
-    logger.info('load sidebar')
-    from DjangoBlog.utils import get_blog_setting
-    blogsetting = get_blog_setting()
-    recent_articles = Article.objects.filter(
-        status='p')[:blogsetting.sidebar_article_count]
-    sidebar_categorys = Category.objects.all()
-    extra_sidebars = SideBar.objects.filter(
-        is_enable=True).order_by('sequence')
-    most_read_articles = Article.objects.filter(status='p').order_by(
-        '-views')[:blogsetting.sidebar_article_count]
-    dates = Article.objects.datetimes('created_time', 'month', order='DESC')
-    links = Links.objects.filter(is_enable=True).filter(
-        Q(show_type=str(linktype)) | Q(show_type='a'))
-    commment_list = Comment.objects.filter(is_enable=True).order_by(
-        '-id')[:blogsetting.sidebar_comment_count]
-    # 标签云 计算字体大小
-    # 根据总数计算出平均值 大小为 (数目/平均值)*步长
-    increment = 5
-    tags = Tag.objects.all()
-    sidebar_tags = None
-    if tags and len(tags) > 0:
-        s = [t for t in [(t, t.get_article_count()) for t in tags] if t[1]]
-        count = sum([t[1] for t in s])
-        dd = 1 if (count == 0 or not len(tags)) else count / len(tags)
-        import random
-        sidebar_tags = list(
-            map(lambda x: (x[0], x[1], (x[1] / dd) * increment + 10), s))
-        random.shuffle(sidebar_tags)
+    value = cache.get("sidebar" + linktype)
+    if value:
+        value['user'] = user
+        return value
+    else:
+        logger.info('load sidebar')
+        from djangoblog.utils import get_blog_setting
+        blogsetting = get_blog_setting()
+        recent_articles = Article.objects.filter(
+            status='p')[:blogsetting.sidebar_article_count]
+        sidebar_categorys = Category.objects.all()
+        extra_sidebars = SideBar.objects.filter(
+            is_enable=True).order_by('sequence')
+        most_read_articles = Article.objects.filter(status='p').order_by(
+            '-views')[:blogsetting.sidebar_article_count]
+        dates = Article.objects.datetimes('created_time', 'month', order='DESC')
+        links = Links.objects.filter(is_enable=True).filter(
+            Q(show_type=str(linktype)) | Q(show_type=LinkShowType.A))
+        commment_list = Comment.objects.filter(is_enable=True).order_by(
+            '-id')[:blogsetting.sidebar_comment_count]
+        # 标签云 计算字体大小
+        # 根据总数计算出平均值 大小为 (数目/平均值)*步长
+        increment = 5
+        tags = Tag.objects.all()
+        sidebar_tags = None
+        if tags and len(tags) > 0:
+            s = [t for t in [(t, t.get_article_count()) for t in tags] if t[1]]
+            count = sum([t[1] for t in s])
+            dd = 1 if (count == 0 or not len(tags)) else count / len(tags)
+            import random
+            sidebar_tags = list(
+                map(lambda x: (x[0], x[1], (x[1] / dd) * increment + 10), s))
+            random.shuffle(sidebar_tags)
 
-    return {
-        'recent_articles': recent_articles,
-        'sidebar_categorys': sidebar_categorys,
-        'most_read_articles': most_read_articles,
-        'article_dates': dates,
-        'sidebar_comments': commment_list,
-        'user': user,
-        'sidabar_links': links,
-        'show_google_adsense': blogsetting.show_google_adsense,
-        'google_adsense_codes': blogsetting.google_adsense_codes,
-        'open_site_comment': blogsetting.open_site_comment,
-        'show_gongan_code': blogsetting.show_gongan_code,
-        'sidebar_tags': sidebar_tags,
-        'extra_sidebars': extra_sidebars
-    }
+        value = {
+            'recent_articles': recent_articles,
+            'sidebar_categorys': sidebar_categorys,
+            'most_read_articles': most_read_articles,
+            'article_dates': dates,
+            'sidebar_comments': commment_list,
+            'sidabar_links': links,
+            'show_google_adsense': blogsetting.show_google_adsense,
+            'google_adsense_codes': blogsetting.google_adsense_codes,
+            'open_site_comment': blogsetting.open_site_comment,
+            'show_gongan_code': blogsetting.show_gongan_code,
+            'sidebar_tags': sidebar_tags,
+            'extra_sidebars': extra_sidebars
+        }
+        cache.set("sidebar" + linktype, value, 60 * 60 * 60 * 3)
+        logger.info('set sidebar cache.key:{key}'.format(key="sidebar" + linktype))
+        value['user'] = user
+        return value
 
 
 @register.inclusion_tag('blog/tags/article_meta_info.html')
@@ -260,16 +259,6 @@ def load_pagination_info(page_obj, page_type, tag_name):
     }
 
 
-"""
-@register.inclusion_tag('nav.html')
-def load_nav_info():
-    category_list = Category.objects.all()
-    return {
-        'nav_category_list': category_list
-    }
-"""
-
-
 @register.inclusion_tag('blog/tags/article_info.html')
 def load_article_detail(article, isindex, user):
     """
@@ -278,7 +267,7 @@ def load_article_detail(article, isindex, user):
     :param isindex:是否列表页，若是列表页只显示摘要
     :return:
     """
-    from DjangoBlog.utils import get_blog_setting
+    from djangoblog.utils import get_blog_setting
     blogsetting = get_blog_setting()
 
     return {
@@ -295,8 +284,9 @@ def load_article_detail(article, isindex, user):
 def gravatar_url(email, size=40):
     """获得gravatar头像"""
     cachekey = 'gravatat/' + email
-    if cache.get(cachekey):
-        return cache.get(cachekey)
+    url = cache.get(cachekey)
+    if url:
+        return url
     else:
         usermodels = OAuthUser.objects.filter(email=email)
         if usermodels:
@@ -311,6 +301,7 @@ def gravatar_url(email, size=40):
         url = "https://www.gravatar.com/avatar/%s?%s" % (hashlib.md5(
             email.lower()).hexdigest(), urllib.parse.urlencode({'d': default, 's': str(size)}))
         cache.set(cachekey, url, 60 * 60 * 10)
+        logger.info('set gravatar cache.key:{key}'.format(key=cachekey))
         return url
 
 
@@ -332,3 +323,9 @@ def query(qs, **kwargs):
           {% endfor %}
     """
     return qs.filter(**kwargs)
+
+
+@register.filter
+def addstr(arg1, arg2):
+    """concatenate arg1 & arg2"""
+    return str(arg1) + str(arg2)
